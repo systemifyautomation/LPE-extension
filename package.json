@@ -1,57 +1,75 @@
 {
-  "name": "lpe-extension",
-  "displayName": "LPE Extension",
+  "name": "lpe-voice-input",
+  "displayName": "LPE Voice Input",
+  "description": "Add a voice recording button to any text input — audio is transcribed via your n8n webhook and inserted at the cursor.",
   "version": "0.1.0",
-  "description": "LPE — M&A legal intelligence powered by n8n. Works across all browsers and Google Workspace.",
-  "author": "LPE",
-  "scripts": {
-    "setup": "node scripts/generate-icon.js",
-    "dev": "plasmo dev",
-    "dev:firefox": "plasmo dev --target=firefox-mv2",
-    "dev:edge": "plasmo dev --target=edge-mv3",
-    "build": "plasmo build",
-    "build:firefox": "plasmo build --target=firefox-mv2",
-    "build:edge": "plasmo build --target=edge-mv3",
-    "build:all": "npm run build && npm run build:firefox && npm run build:edge",
-    "package": "plasmo package",
-    "type-check": "tsc --noEmit"
+  "publisher": "lpe",
+  "engines": {
+    "vscode": "^1.80.0"
   },
-  "dependencies": {
-    "@parcel/watcher-win32-x64": "^2.5.6",
-    "@plasmohq/messaging": "^0.6.2",
-    "@plasmohq/storage": "^1.12.0",
-    "clsx": "^2.1.0",
-    "lucide-react": "^0.364.0",
-    "plasmo": "^0.89.3",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "lpe-voice-input.startRecording",
+        "title": "Voice Input: Start Recording",
+        "icon": "$(mic)"
+      },
+      {
+        "command": "lpe-voice-input.configure",
+        "title": "Voice Input: Configure Webhook URL"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "lpe-voice-input.startRecording",
+        "key": "ctrl+shift+v",
+        "mac": "cmd+shift+v"
+      }
+    ],
+    "configuration": {
+      "title": "LPE Voice Input",
+      "properties": {
+        "lpeVoiceInput.webhookUrl": {
+          "type": "string",
+          "default": "",
+          "description": "n8n webhook URL that receives the audio and returns a transcription. The webhook should accept POST with JSON body { audio: string (base64), mimeType: string } and respond with JSON { transcription: string }."
+        },
+        "lpeVoiceInput.insertTarget": {
+          "type": "string",
+          "default": "editor",
+          "enum": [
+            "editor",
+            "clipboard"
+          ],
+          "enumDescriptions": [
+            "Insert transcription at the active editor cursor position.",
+            "Copy transcription to clipboard (use when working in other input fields)."
+          ],
+          "description": "Where to place the transcription result."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts"
   },
   "devDependencies": {
-    "@types/chrome": "^0.0.260",
-    "@types/node": "^20.11.5",
-    "@types/react": "^18.2.48",
-    "@types/react-dom": "^18.2.18",
-    "autoprefixer": "^10.4.17",
-    "postcss": "^8.4.33",
-    "tailwindcss": "^3.4.1",
-    "typescript": "^5.3.3"
+    "@types/node": "^18.19.130",
+    "@types/vscode": "^1.80.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.0.0",
+    "typescript": "^5.1.0"
   },
-  "manifest": {
-    "host_permissions": [
-      "https://*.google.com/*",
-      "https://oauth2.googleapis.com/*",
-      "https://www.googleapis.com/*"
-    ],
-    "permissions": [
-      "identity",
-      "storage",
-      "tabs",
-      "activeTab",
-      "scripting",
-      "alarms"
-    ],
-    "content_security_policy": {
-      "extension_pages": "script-src 'self'; object-src 'self'"
-    }
+  "dependencies": {
+    "dotenv": "^17.4.2"
   }
 }
