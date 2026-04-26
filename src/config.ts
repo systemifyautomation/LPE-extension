@@ -15,19 +15,19 @@ export function loadEnv(extensionPath: string): void {
 }
 
 /**
- * Resolve the webhook URL with this priority:
- *   1. LPE_WEBHOOK_URL environment variable / .env file
- *   2. lpeVoiceInput.webhookUrl VS Code setting
+ * Resolve the OpenAI API key with this priority:
+ *   1. OPENAI_API_KEY environment variable / .env file
+ *   2. lpeVoiceInput.openaiApiKey VS Code setting
  *
  * Returns an empty string if neither is set.
  */
-export function resolveWebhookUrl(): string {
-  const envUrl = (process.env['LPE_WEBHOOK_URL'] ?? '').trim();
-  if (envUrl) return envUrl;
+export function resolveApiKey(): string {
+  const envKey = (process.env['OPENAI_API_KEY'] ?? '').trim();
+  if (envKey) return envKey;
 
-  const settingsUrl = vscode.workspace
+  const settingsKey = vscode.workspace
     .getConfiguration('lpeVoiceInput')
-    .get<string>('webhookUrl', '')
+    .get<string>('openaiApiKey', '')
     .trim();
-  return settingsUrl;
+  return settingsKey;
 }

@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { RecorderPanel } from './recorderPanel';
-import { sendToWebhook } from './webhook';
-import { loadEnv, resolveWebhookUrl } from './config';
+import { transcribeAudio } from './whisper';
+import { loadEnv, resolveApiKey } from './config';
 
 let statusBarItem: vscode.StatusBarItem;
 
@@ -20,19 +20,19 @@ export function activate(context: vscode.ExtensionContext) {
     'lpe-voice-input.startRecording',
     () => {
       const config = vscode.workspace.getConfiguration('lpeVoiceInput');
-      const webhookUrl = resolveWebhookUrl();
+      const apiKey = resolveApiKey();
 
-      if (!webhookUrl) {
+      if (!apiKey) {
         vscode.window
           .showWarningMessage(
-            'LPE Voice Input: Webhook URL not configured.',
+            'LPE Voice Input: OpenAI API key not configured.',
             'Open Settings'
           )
           .then((action) => {
             if (action === 'Open Settings') {
               vscode.commands.executeCommand(
                 'workbench.action.openSettings',
-                'lpeVoiceInput.webhookUrl'
+                'lpeVoiceInput.openaiApiKey'
               );
             }
           });
@@ -45,7 +45,7 @@ export function activate(context: vscode.ExtensionContext) {
           setStatus('$(sync~spin) Transcribing…');
 
           try {
-            const transcription = await sendToWebhook(webhookUrl, audioBase64, mimeType);
+            const transcription = await transcribeAudio(apiKey, audioBase64, mimeType);
             await insertTranscription(transcription, config);
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
@@ -61,7 +61,7 @@ export function activate(context: vscode.ExtensionContext) {
   const configure = vscode.commands.registerCommand('lpe-voice-input.configure', () => {
     vscode.commands.executeCommand(
       'workbench.action.openSettings',
-      'lpeVoiceInput.webhookUrl'
+      'lpeVoiceInput.openaiApiKey'
     );
   });
 

@@ -34,10 +34,10 @@
     "configuration": {
       "title": "LPE Voice Input",
       "properties": {
-        "lpeVoiceInput.webhookUrl": {
+        "lpeVoiceInput.openaiApiKey": {
           "type": "string",
           "default": "",
-          "description": "n8n webhook URL that receives the audio and returns a transcription. The webhook should accept POST with JSON body { audio: string (base64), mimeType: string } and respond with JSON { transcription: string }."
+          "markdownDescription": "OpenAI API key (`sk-…`) used to call Whisper for transcription. Prefer setting this via the `OPENAI_API_KEY` variable in your `.env` file so it is never stored in VS Code settings."
         },
         "lpeVoiceInput.insertTarget": {
           "type": "string",
