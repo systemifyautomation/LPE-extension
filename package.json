@@ -1,6 +1,6 @@
 {
   "name": "lpe-voice-input",
-  "displayName": "LPE Voice Input",
+  "displayName": "Voice Auto-fill",
   "description": "Add a voice recording button to any text input — audio is transcribed via your n8n webhook and inserted at the cursor.",
   "version": "0.1.0",
   "publisher": "lpe",
@@ -32,7 +32,7 @@
       }
     ],
     "configuration": {
-      "title": "LPE Voice Input",
+      "title": "Voice Auto-fill",
       "properties": {
         "lpeVoiceInput.openaiApiKey": {
           "type": "string",

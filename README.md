@@ -1,226 +1,186 @@
-# LPE Voice Input — VS Code Extension
+# Voice Auto-fill — Chrome Extension
 
-Record your voice directly inside VS Code, have it transcribed by **OpenAI Whisper**, and get the text inserted at your cursor — or copied to the clipboard so you can paste it into **any input field in Chrome**.
+Add a voice button to **any text input** on any webpage. Click the mic, speak, and the transcription (powered by **OpenAI Whisper**) is inserted automatically — no copy-paste needed.
 
 ---
 
 ## Table of Contents
 
-1. [Prerequisites](#1-prerequisites)
-2. [Install & Build](#2-install--build)
-3. [Configure the OpenAI API Key](#3-configure-the-openai-api-key)
-4. [Using the Extension](#4-using-the-extension)
-5. [Using Voice Input in Chrome (Clipboard Mode)](#5-using-voice-input-in-chrome-clipboard-mode)
-6. [Keyboard Shortcut](#6-keyboard-shortcut)
-7. [Settings Reference](#7-settings-reference)
-8. [Troubleshooting](#8-troubleshooting)
-9. [Packaging](#9-packaging)
+1. [How It Works](#1-how-it-works)
+2. [Prerequisites](#2-prerequisites)
+3. [Load the Extension in Chrome](#3-load-the-extension-in-chrome)
+4. [Add Your OpenAI API Key](#4-add-your-openai-api-key)
+5. [Using the Extension](#5-using-the-extension)
+6. [Settings Reference](#6-settings-reference)
+7. [Troubleshooting](#7-troubleshooting)
 
 ---
 
-## 1. Prerequisites
+## 1. How It Works
 
-| Requirement | Version |
-|---|---|
-| [Node.js](https://nodejs.org) | 18 or higher |
-| [Visual Studio Code](https://code.visualstudio.com) | 1.80 or higher |
-| [OpenAI account](https://platform.openai.com) | API key with Whisper access |
-| Google Chrome | Any modern version |
-
-> **Microphone access** — VS Code will ask for microphone permission the first time you record. Allow it.
-
----
-
-## 2. Install & Build
-
-```bash
-# 1. Clone the repository
-git clone https://github.com/your-org/LPE-extension.git
-cd LPE-extension
-
-# 2. Install dependencies
-npm install
-
-# 3. Compile TypeScript
-npm run compile
+```
+Focus any <input> or <textarea> on any webpage
+        ↓
+A small 🎤 button appears at the right edge of that field
+        ↓
+Click 🎤 → speak → click ⏹ to stop
+        ↓
+Audio is sent to OpenAI Whisper via the background service worker
+        ↓
+Transcription is inserted directly into the focused field
 ```
 
+No copy-paste. No page reload. Works on Gmail, Google Docs, Notion, Slack,  
+web forms — anywhere Chrome runs.
+
 ---
 
-## 3. Configure the OpenAI API Key
+## 2. Prerequisites
 
-Your API key is kept out of source control using a `.env` file.
+| Requirement | Notes |
+|---|---|
+| Google Chrome | Version 109 or newer (Manifest V3 support) |
+| [OpenAI account](https://platform.openai.com) | API key with Whisper access |
 
-### Step 1 — Get your OpenAI API key
+---
+
+## 3. Load the Extension in Chrome
+
+The extension is loaded as an **unpacked extension** — no Chrome Web Store required.
+
+### Step 1 — Open Chrome Extensions
+
+In the Chrome address bar, go to:
+```
+chrome://extensions
+```
+
+### Step 2 — Enable Developer Mode
+
+Toggle **Developer mode** on (top-right corner).
+
+### Step 3 — Load Unpacked
+
+Click **Load unpacked** and select the `chrome-extension` folder inside this repository:
+
+```
+LPE-extension/
+└── chrome-extension/   ← select this folder
+```
+
+The extension now appears in your extensions list with the 🎤 icon in the toolbar.
+
+---
+
+## 4. Add Your OpenAI API Key
+
+### Step 1 — Get your key
 
 1. Go to [https://platform.openai.com/api-keys](https://platform.openai.com/api-keys)
 2. Click **+ Create new secret key**
-3. Copy the key (starts with `sk-…`) — you will only see it once
+3. Copy the key — it starts with `sk-` and you only see it once
 
-### Step 2 — Create your `.env` file
+### Step 2 — Open the extension popup
 
-```powershell
-# Windows PowerShell
-Copy-Item .env.example .env
-```
+Click the **🎤 Voice Auto-fill** icon in the Chrome toolbar  
+(pin it first via the puzzle-piece Extensions menu if it's hidden).
 
-### Step 3 — Paste your API key into `.env`
+### Step 3 — Paste and save
 
-```
-OPENAI_API_KEY=sk-proj-...your-key-here...
-```
+Paste your key into the **OpenAI API Key** field and click **Save**.
 
-> `.env` is listed in `.gitignore` and will **never** be committed.
-
-### Alternative — VS Code Settings (no `.env` needed)
-
-1. Open Settings: `Ctrl+,`
-2. Search for `lpeVoiceInput.openaiApiKey`
-3. Paste your API key
-
-> The `.env` value always takes priority over the VS Code setting.
+> The key is stored only in your local browser storage (`chrome.storage.local`) and is only ever sent to `api.openai.com`. It is never committed to disk or synced to the cloud.
 
 ---
 
-## 4. Using the Extension
+## 5. Using the Extension
 
-### Step 1 — Open VS Code in the project folder
+### Basic usage
 
-### Step 2 — Launch the Extension Development Host
+1. **Click any text field** on a webpage (input, textarea, search box, compose window, etc.)
+2. A small **blue 🎤 button** appears at the right edge of the field
+3. **Click 🎤** — Chrome will ask for microphone permission the first time (allow it)
+4. **Speak** — the button turns red and pulses while recording
+5. **Click ⏹** to stop recording
+6. The button turns orange while Whisper processes the audio (1–3 seconds)
+7. The transcription is **inserted directly into the field** at the cursor position
 
-Press `F5` — a new VS Code window opens with the extension active.
+### Visual indicators
 
-> For permanent installation, see [Packaging](#9-packaging).
-
-### Step 3 — Trigger voice input
-
-Click the **`🎤 Voice`** button in the bottom-right status bar, or press `Ctrl+Shift+V`.
-
-### Step 4 — Record your voice
-
-A recorder panel opens on the right side of VS Code.
-
-| Control | Action |
+| Button state | Meaning |
 |---|---|
-| 🎤 (mic icon) | Start recording |
-| ⏹ (stop icon) | Stop recording |
-| **Send for Transcription** | Upload audio to OpenAI Whisper and receive text |
-| **Cancel** | Close without sending |
+| Blue 🎤 | Ready — click to start |
+| Red ⏹ pulsing | Recording in progress — click to stop |
+| Orange spinner | Sending to Whisper, waiting for result |
 
-A live audio visualizer and elapsed timer are shown while recording.
+### Notifications
 
-### Step 5 — Transcription is inserted automatically
+A small toast notification appears in the bottom-right corner:
 
-The text appears at the cursor in your active editor the moment Whisper responds (usually 1–3 seconds).
-
----
-
-## 5. Using Voice Input in Chrome (Clipboard Mode)
-
-Chrome input fields (web apps, Gmail, forms, etc.) are outside VS Code. Use **Clipboard Mode** to bridge the two.
-
-### Enable Clipboard Mode
-
-1. Open Settings: `Ctrl+,`
-2. Search for `lpeVoiceInput.insertTarget`
-3. Change the value to **`clipboard`**
-
-### Step-by-step workflow for Chrome
-
-```
-1.  Switch focus to VS Code          (click VS Code in the taskbar)
-2.  Press Ctrl+Shift+V               ──► Recorder panel opens
-3.  Click 🎤 and speak your text
-4.  Click ⏹ to stop recording
-5.  Click "Send for Transcription"   ──► Whisper processes the audio
-6.  Transcription is copied to your clipboard automatically
-7.  Switch to Chrome                 (Alt+Tab)
-8.  Click the input field to focus it
-9.  Paste with Ctrl+V
-```
-
-A VS Code notification confirms the text is ready:
-
-> *"Transcription copied to clipboard — paste it where you need it."*
-
-### Tip — Snap VS Code and Chrome side by side
-
-Use Windows Snap (`Win+Left` / `Win+Right`) to place both windows next to each other so you can record and paste without losing context.
-
----
-
-## 6. Keyboard Shortcut
-
-| OS | Shortcut |
+| Message | Meaning |
 |---|---|
-| Windows / Linux | `Ctrl+Shift+V` |
-| macOS | `Cmd+Shift+V` |
-
-**To change the shortcut:**
-
-1. Press `Ctrl+K` then `Ctrl+S` to open Keyboard Shortcuts
-2. Search for `Voice Input: Start Recording`
-3. Click the pencil icon and press your preferred key combination
+| ✓ Transcription inserted | Success |
+| Microphone access denied | Browser blocked mic — see Troubleshooting |
+| OpenAI API key not set | Click the toolbar icon to add your key |
+| OpenAI error 401 | Invalid key — update it in the popup |
+| OpenAI error 429 | Rate limit hit — wait a moment and retry |
 
 ---
 
-## 7. Settings Reference
+## 6. Settings Reference
 
-| Setting | Default | Description |
+All settings are in the extension popup (click the toolbar icon).
+
+| Setting | Where | Description |
 |---|---|---|
-| `lpeVoiceInput.openaiApiKey` | *(empty)* | OpenAI API key — prefer `.env` (`OPENAI_API_KEY`) so it is never stored in VS Code settings |
-| `lpeVoiceInput.insertTarget` | `editor` | `editor` — insert at cursor · `clipboard` — copy to clipboard |
+| OpenAI API Key | Popup | `sk-…` key for Whisper API calls |
 
 ---
 
-## 8. Troubleshooting
+## 7. Troubleshooting
 
-### "OpenAI API key not configured"
+### Mic button doesn't appear
 
-- Make sure `.env` contains `OPENAI_API_KEY=sk-…`
-- Or set `lpeVoiceInput.openaiApiKey` in VS Code Settings
-- Reload VS Code after editing `.env`
+- Make sure the extension is enabled at `chrome://extensions`
+- Reload the page after installing the extension
+- Some pages using iframes may not show the button inside the iframe — click directly on the main page input
 
-### "OpenAI returned HTTP 401"
+### Microphone permission denied
 
-- Your API key is invalid or has been revoked
-- Generate a new key at [https://platform.openai.com/api-keys](https://platform.openai.com/api-keys) and update `.env`
+1. Click the lock/info icon to the left of the URL bar
+2. Find **Microphone** and set it to **Allow**
+3. Reload the page
 
-### "OpenAI returned HTTP 429"
+### "OpenAI API key not set"
 
-- You have hit your rate limit or exhausted your OpenAI quota
+- Click the 🎤 toolbar icon and save your key in the popup
+
+### "Invalid API key (401)"
+
+- Your key may have expired or been revoked
+- Create a new one at [https://platform.openai.com/api-keys](https://platform.openai.com/api-keys)
+- Paste the new key into the popup and save
+
+### "Rate limit exceeded (429)"
+
+- You've hit your OpenAI API quota
 - Check usage at [https://platform.openai.com/usage](https://platform.openai.com/usage)
+- Add billing credits or wait for the quota to reset
 
-### "Microphone access denied"
+### Transcription text not accepted by the input (React/Vue apps)
 
-- On Windows: **Settings → Privacy → Microphone** — ensure VS Code is allowed
-- In VS Code: **Help → Toggle Developer Tools → Console** — look for permission errors
+The content script uses native value setters and dispatches both `input` and `change` events, which is compatible with React, Vue, and Angular controlled inputs. If a specific app still doesn't pick up the text, try clicking inside the field and typing a character first, then triggering the voice input.
 
-### Transcription is empty or cuts off
+### Extension stops working after Chrome update
 
-- Speak clearly and wait a moment before clicking Stop
-- Check your OpenAI account has an active billing method
-- Audio shorter than ~0.1 seconds is rejected by Whisper
-
-### Audio not recording in VS Code for the Web (vscode.dev)
-
-- Use the installed **desktop** version of VS Code — vscode.dev has limited WebAPI access inside webviews
+Go to `chrome://extensions` and click **Update** to reload the extension files.
 
 ---
 
-## 9. Packaging
+## Reloading after code changes
 
-To install the extension permanently (without needing `F5` every time):
+If you edit any file in the `chrome-extension/` folder:
 
-```bash
-# Install the vsce packaging tool
-npm install -g @vscode/vsce
-
-# Package into a .vsix file
-vsce package
-
-# Install it in VS Code
-code --install-extension lpe-voice-input-0.1.0.vsix
-```
-
-> When sharing the `.vsix`, do **not** include `.env`. Recipients should create their own `.env` from `.env.example` and add their own API key.
+1. Go to `chrome://extensions`
+2. Click the **↺ refresh** icon on the Voice Auto-fill card
+3. Reload the tab you are using

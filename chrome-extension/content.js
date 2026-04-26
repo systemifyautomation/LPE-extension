@@ -1,0 +1,493 @@
+(() => {
+  'use strict';
+
+  // ---- State ---------------------------------------------------------------
+  let micButton    = null;
+  let modeButton   = null;
+  let cancelButton = null;
+  let activeInput  = null;
+  let activeStream = null;
+  let mediaRecorder = null;
+  let audioChunks = [];
+  let isRecording  = false;
+  let isProcessing = false;
+  let cancelled    = false;
+  let recordingMimeType = '';
+  let recordingStartTime = 0;
+  let hideTimer = null;
+  let voiceMode = 'transcription'; // 'transcription' | 'prompt'
+
+  // ---- Extension context guard --------------------------------------------
+  // After an extension reload the content script context becomes invalid.
+  // Any chrome API call will throw "Extension context invalidated."
+  // Check validity before every call and surface a friendly message instead.
+
+  function isContextValid() {
+    try { return !!chrome.runtime?.id; } catch (_) { return false; }
+  }
+
+  function assertContext() {
+    if (!isContextValid()) {
+      showToast('Extension reloaded — please refresh this page.', 'error');
+      throw new Error('Extension context invalidated.');
+    }
+  }
+
+  // Load persisted mode
+  try {
+    chrome.storage.local.get({ voiceMode: 'transcription' }, ({ voiceMode: stored }) => {
+      voiceMode = stored;
+      if (modeButton) updateModeButton();
+    });
+  } catch (_) { /* context already gone on initial inject — ignore */ }
+
+  // ---- Mic button ----------------------------------------------------------
+
+  function createMicButton() {
+    const btn = document.createElement('button');
+    btn.className = 'lpe-mic-btn';
+    btn.title = 'Voice Input';
+    btn.setAttribute('aria-label', 'Start voice input');
+    btn.innerHTML = iconMic();
+    btn.style.zIndex = '2147483647';
+    btn.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); });
+    btn.addEventListener('click', handleMicClick);
+    btn.addEventListener('mouseenter', () => { if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; } });
+    btn.addEventListener('mouseleave', () => { if (!isRecording && !isProcessing) scheduleHide(); });
+    (document.documentElement || document.body).appendChild(btn);
+    return btn;
+  }
+
+  // ---- Mode toggle button --------------------------------------------------
+
+  function createModeButton() {
+    const btn = document.createElement('button');
+    btn.style.zIndex = '2147483647';
+    btn.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); });
+    btn.addEventListener('click', handleModeToggle);
+    btn.addEventListener('mouseenter', () => { if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; } });
+    btn.addEventListener('mouseleave', () => { if (!isRecording && !isProcessing) scheduleHide(); });
+    (document.documentElement || document.body).appendChild(btn);
+    updateModeButton(btn);
+    return btn;
+  }
+
+  function updateModeButton(btn) {
+    const b = btn || modeButton;
+    if (!b) return;
+    if (voiceMode === 'prompt') {
+      b.className = 'lpe-mode-btn lpe-mode-ai';
+      b.textContent = 'AI';
+      b.title = 'AI Prompt mode — click to switch to Transcription';
+    } else {
+      b.className = 'lpe-mode-btn lpe-mode-transcription';
+      b.textContent = 'T';
+      b.title = 'Transcription mode — click to switch to AI Prompt';
+    }
+  }
+
+  function handleModeToggle(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    voiceMode = voiceMode === 'transcription' ? 'prompt' : 'transcription';
+    try { chrome.storage.local.set({ voiceMode }); } catch (_) {}
+    updateModeButton();
+  }
+
+  // ---- Icons ---------------------------------------------------------------
+
+  // ---- Cancel button -------------------------------------------------------
+
+  function createCancelButton() {
+    const btn = document.createElement('button');
+    btn.className = 'lpe-cancel-btn';
+    btn.title = 'Cancel';
+    btn.setAttribute('aria-label', 'Cancel');
+    btn.innerHTML = iconX();
+    btn.style.zIndex = '2147483647';
+    btn.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); });
+    btn.addEventListener('click', handleCancel);
+    btn.addEventListener('mouseenter', () => { if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; } });
+    (document.documentElement || document.body).appendChild(btn);
+    return btn;
+  }
+
+  function handleCancel(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (isRecording) {
+      // Stop recorder but skip processRecording
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.onstop = () => { if (activeStream) activeStream.getTracks().forEach(t => t.stop()); };
+        mediaRecorder.stop();
+      }
+      isRecording = false;
+    }
+    if (isProcessing) {
+      cancelled = true;
+      isProcessing = false;
+    }
+    resetMicButton();
+    showCancelButton(false);
+    showModeButton(true);
+  }
+
+  function showCancelButton(visible) {
+    if (!cancelButton) return;
+    cancelButton.style.display = visible ? 'flex' : 'none';
+  }
+
+  function showModeButton(visible) {
+    if (!modeButton) return;
+    modeButton.style.display = visible ? 'flex' : 'none';
+  }
+
+  function resetMicButton() {
+    if (!micButton) return;
+    micButton.classList.remove('lpe-recording', 'lpe-processing');
+    micButton.innerHTML = iconMic();
+    micButton.title = 'Voice Input';
+    micButton.setAttribute('aria-label', 'Start voice input');
+  }
+
+  // ---- Icons ---------------------------------------------------------------
+
+  function iconX() {
+    return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="13" height="13" aria-hidden="true">
+      <path d="M18 6 6 18M6 6l12 12" stroke-linecap="round"/>
+    </svg>`;
+  }
+
+  function iconMic() {
+    return `<svg viewBox="0 0 24 24" fill="currentColor" width="15" height="15" aria-hidden="true">
+      <path d="M12 14a3 3 0 003-3V5a3 3 0 00-6 0v6a3 3 0 003 3z"/>
+      <path d="M19 11a1 1 0 00-2 0 5 5 0 01-10 0 1 1 0 00-2 0 7 7 0 006 6.92V20H9a1 1 0 000 2h6a1 1 0 000-2h-2v-2.08A7 7 0 0019 11z"/>
+    </svg>`;
+  }
+
+  function iconStop() {
+    return `<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14" aria-hidden="true">
+      <rect x="5" y="5" width="14" height="14" rx="2"/>
+    </svg>`;
+  }
+
+  function iconSpinner() {
+    return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+        width="14" height="14" class="lpe-spin" aria-hidden="true">
+      <path d="M12 2a10 10 0 1 0 10 10" stroke-linecap="round"/>
+    </svg>`;
+  }
+
+  // ---- Button positioning --------------------------------------------------
+
+  function positionButtons(input) {
+    if (!micButton) return;
+    const rect = input.getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0) return;
+
+    const micSize = 28;
+    const modeW   = 34;
+    const modeH   = 22;
+    const gap     = 5;
+    const margin  = 4;
+
+    const micTop  = rect.top + (rect.height - micSize) / 2;
+    const micLeft = Math.min(rect.right - micSize - margin, window.innerWidth - micSize - 4);
+
+    micButton.style.top     = `${micTop}px`;
+    micButton.style.left    = `${micLeft}px`;
+    micButton.style.display = 'flex';
+
+    const active = isRecording || isProcessing;
+
+    if (modeButton) {
+      const modeTop  = rect.top + (rect.height - modeH) / 2;
+      const modeLeft = micLeft - modeW - gap;
+      modeButton.style.top     = `${modeTop}px`;
+      modeButton.style.left    = `${modeLeft}px`;
+      modeButton.style.display = active ? 'none' : 'flex';
+    }
+
+    if (cancelButton) {
+      const cancelTop  = rect.top + (rect.height - micSize) / 2;
+      const cancelLeft = micLeft - micSize - gap;
+      cancelButton.style.top     = `${cancelTop}px`;
+      cancelButton.style.left    = `${cancelLeft}px`;
+      cancelButton.style.display = active ? 'flex' : 'none';
+    }
+  }
+
+  function scheduleHide() {
+    if (hideTimer) clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => {
+      if (!isRecording && !isProcessing) {
+        if (micButton)    micButton.style.display    = 'none';
+        if (modeButton)   modeButton.style.display   = 'none';
+        if (cancelButton) cancelButton.style.display = 'none';
+        activeInput = null;
+      }
+      hideTimer = null;
+    }, 250);
+  }
+
+  // ---- Input detection -----------------------------------------------------
+
+  function isTextInput(el) {
+    if (!el || typeof el.tagName !== 'string') return false;
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'textarea') return true;
+    if (tag === 'input') {
+      const type = (el.getAttribute('type') || 'text').toLowerCase();
+      return ['text', 'search', 'email', 'url', 'tel', 'password', ''].includes(type);
+    }
+    if (el.isContentEditable && el.getAttribute('contenteditable') !== 'false') return true;
+    const role = (el.getAttribute('role') || '').toLowerCase();
+    if (role === 'textbox' || role === 'searchbox' || role === 'combobox') return true;
+    return false;
+  }
+
+  function getComposedTarget(e) {
+    if (e.composedPath) {
+      const path = e.composedPath();
+      if (path && path.length > 0) return path[0];
+    }
+    return e.target;
+  }
+
+  // ---- Focus / hover tracking ----------------------------------------------
+
+  document.addEventListener('focusin', (e) => {
+    const target = getComposedTarget(e);
+    if (!isTextInput(target)) return;
+    if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+    activeInput = target;
+    if (!micButton)    micButton    = createMicButton();
+    if (!modeButton)   modeButton   = createModeButton();
+    if (!cancelButton) cancelButton = createCancelButton();
+    positionButtons(activeInput);
+  }, true);
+
+  document.addEventListener('focusout', () => {
+    if (isRecording || isProcessing) return;
+    scheduleHide();
+  }, true);
+
+  document.addEventListener('mouseover', (e) => {
+    if (isRecording) return;
+    const target = getComposedTarget(e);
+    if (!isTextInput(target)) return;
+    if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+    activeInput = target;
+    if (!micButton)    micButton    = createMicButton();
+    if (!modeButton)   modeButton   = createModeButton();
+    if (!cancelButton) cancelButton = createCancelButton();
+    positionButtons(activeInput);
+  }, true);
+
+  document.addEventListener('mouseout', (e) => {
+    if (isRecording) return;
+    const rel = e.relatedTarget;
+    if (rel && (
+      (micButton    && micButton.contains(rel))    ||
+      (modeButton   && modeButton.contains(rel))   ||
+      (cancelButton && cancelButton.contains(rel))
+    )) return;
+    scheduleHide();
+  }, true);
+
+  ['scroll', 'resize'].forEach(ev => {
+    window.addEventListener(ev, () => {
+      if (activeInput && micButton && micButton.style.display !== 'none') positionButtons(activeInput);
+    }, { passive: true });
+  });
+
+  // ---- Recording -----------------------------------------------------------
+
+  async function handleMicClick(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (isRecording) stopRecording();
+    else await startRecording();
+  }
+
+  async function startRecording() {
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl:  true,
+          channelCount: 1,       // mono — Whisper is trained on mono speech
+          sampleRate: 16000,     // Whisper's native sample rate
+        },
+        video: false,
+      });
+    } catch (err) {
+      showToast('Microphone access denied: ' + err.message, 'error');
+      return;
+    }
+
+    audioChunks = [];
+    activeStream = stream;
+    recordingStartTime = Date.now();
+    recordingMimeType =
+      MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' :
+      MediaRecorder.isTypeSupported('audio/webm')             ? 'audio/webm' : '';
+
+    mediaRecorder = new MediaRecorder(stream, recordingMimeType ? { mimeType: recordingMimeType } : undefined);
+    mediaRecorder.ondataavailable = ev => { if (ev.data.size > 0) audioChunks.push(ev.data); };
+    mediaRecorder.onstop = () => { stream.getTracks().forEach(t => t.stop()); processRecording(); };
+    mediaRecorder.start(100);
+
+    isRecording = true;
+    cancelled = false;
+    micButton.classList.add('lpe-recording');
+    micButton.innerHTML = iconStop();
+    micButton.title = 'Stop recording';
+    micButton.setAttribute('aria-label', 'Stop recording');
+    showCancelButton(true);
+    showModeButton(false);
+  }
+
+  function stopRecording() {
+    if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
+    mediaRecorder.stop();
+    isRecording = false;
+    micButton.classList.remove('lpe-recording');
+    micButton.classList.add('lpe-processing');
+    micButton.innerHTML = iconSpinner();
+    micButton.title = voiceMode === 'prompt' ? 'Processing with AI…' : 'Transcribing…';
+    // cancel button stays visible during processing
+  }
+
+  function processRecording() {
+    const targetInput = activeInput;
+    const currentMode = voiceMode;
+    const duration    = (Date.now() - recordingStartTime) / 1000; // seconds
+    isProcessing = true;
+
+    const mimeType = recordingMimeType || 'audio/webm';
+    const blob     = new Blob(audioChunks, { type: mimeType });
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = reader.result.split(',')[1];
+      const action = currentMode === 'prompt' ? 'prompt' : 'transcribe';
+
+      try { assertContext(); } catch (_) {
+        isProcessing = false;
+        resetMicButton();
+        showCancelButton(false);
+        showModeButton(true);
+        return;
+      }
+
+      chrome.runtime.sendMessage(
+        { action, audio: base64, mimeType, duration, domain: location.hostname },
+        (response) => {
+          isProcessing = false;
+          resetMicButton();
+          showCancelButton(false);
+          showModeButton(true);
+
+          if (cancelled) { cancelled = false; return; }
+
+          if (chrome.runtime.lastError) {
+            showToast('Extension error: ' + chrome.runtime.lastError.message, 'error');
+            return;
+          }
+          if (response.error) {
+            showToast(response.error, 'error');
+            return;
+          }
+          insertText(response.transcription, targetInput);
+          saveToHistory(response.transcription, {
+            mode:      currentMode,
+            cost:      response.cost,
+            model:     response.model,
+            inputText: response.inputText,
+          });
+          showToast('✓ Transcription inserted', 'success');
+        }
+      );
+    };
+    reader.readAsDataURL(blob);
+  }
+
+  // ---- Text insertion ------------------------------------------------------
+
+  function insertText(text, target) {
+    const el = target || activeInput;
+    if (!el) return;
+    el.focus();
+
+    if (el.isContentEditable) {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0 || !el.contains(sel.anchorNode)) {
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        range.collapse(false);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+      const inserted = document.execCommand('insertText', false, text);
+      if (!inserted) {
+        sel.deleteFromDocument();
+        sel.getRangeAt(0).insertNode(document.createTextNode(text));
+        sel.collapseToEnd();
+        el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: text, inputType: 'insertText' }));
+      }
+      return;
+    }
+
+    const proto = el.tagName.toLowerCase() === 'textarea'
+      ? HTMLTextAreaElement.prototype
+      : HTMLInputElement.prototype;
+    const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+
+    const start    = el.selectionStart ?? el.value.length;
+    const end      = el.selectionEnd   ?? el.value.length;
+    const newValue = el.value.slice(0, start) + text + el.value.slice(end);
+
+    if (nativeSetter) nativeSetter.call(el, newValue);
+    else el.value = newValue;
+
+    el.dispatchEvent(new Event('input',  { bubbles: true, composed: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+    el.setSelectionRange(start + text.length, start + text.length);
+  }
+
+  // ---- History -------------------------------------------------------------
+
+  function saveToHistory(text, { mode, cost, model, inputText } = {}) {
+    if (!isContextValid()) return;
+    chrome.storage.local.get({ transcriptionHistory: [] }, ({ transcriptionHistory }) => {
+      const entry = {
+        text,
+        inputText: inputText || text,
+        domain: location.hostname,
+        timestamp: Date.now(),
+        mode: mode || 'transcription',
+        cost: cost || 0,
+        model: model || 'whisper-1',
+      };
+      const updated = [entry, ...transcriptionHistory].slice(0, 50);
+      chrome.storage.local.set({ transcriptionHistory: updated });
+    });
+  }
+
+  // ---- Toast ---------------------------------------------------------------
+
+  function showToast(message, type = 'info') {
+    const toast = document.createElement('div');
+    toast.className = `lpe-toast lpe-toast-${type}`;
+    toast.textContent = message;
+    (document.documentElement || document.body).appendChild(toast);
+    requestAnimationFrame(() => requestAnimationFrame(() => toast.classList.add('lpe-toast-visible')));
+    setTimeout(() => {
+      toast.classList.remove('lpe-toast-visible');
+      setTimeout(() => toast.remove(), 300);
+    }, 3500);
+  }
+})();
