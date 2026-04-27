@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "Voice-to-text for any input field — transcribed by OpenAI Whisper",
 
-  "permissions": ["storage"],
+  "permissions": ["storage", "offscreen"],
   "host_permissions": [
     "https://api.openai.com/*",
     "https://script.google.com/*",

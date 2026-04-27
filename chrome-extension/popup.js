@@ -189,3 +189,153 @@ function relativeTime(ts) {
 function escapeHtml(str = '') {
   return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
+
+// ---- Quick Record -----------------------------------------------------------
+
+const qrMicBtn     = document.getElementById('qrMicBtn');
+const qrStatusText = document.getElementById('qrStatusText');
+const qrChevronBtn = document.getElementById('qrChevronBtn');
+const qrModeLabel  = document.getElementById('qrModeLabel');
+const qrDropdown   = document.getElementById('qrDropdown');
+const qrResult     = document.getElementById('qrResult');
+const qrTextarea   = document.getElementById('qrTextarea');
+const qrCopyBtn    = document.getElementById('qrCopyBtn');
+const qrDismissBtn = document.getElementById('qrDismissBtn');
+
+let qrRecState = 'idle';   // idle | recording | processing
+let qrMode     = 'transcribe';
+
+const QR_MIC_SVG  = `<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M12 14a3 3 0 003-3V5a3 3 0 00-6 0v6a3 3 0 003 3z"/><path d="M19 11a1 1 0 00-2 0 5 5 0 01-10 0 1 1 0 00-2 0 7 7 0 006 6.92V20H9a1 1 0 000 2h6a1 1 0 000-2h-2v-2.08A7 7 0 0019 11z"/></svg>`;
+const QR_STOP_SVG = `<svg viewBox="0 0 24 24" fill="currentColor" width="13" height="13"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>`;
+const QR_SPIN_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="17" height="17" style="animation:qr-spin 0.9s linear infinite;display:block"><circle cx="12" cy="12" r="9" stroke-opacity="0.25"/><path d="M12 3a9 9 0 019 9" stroke-linecap="round"/></svg>`;
+
+function setQrMode(mode) {
+  qrMode = mode;
+  const isPrompt = mode === 'prompt';
+  qrModeLabel.textContent  = isPrompt ? 'Instruction' : 'Transcription';
+  qrChevronBtn.className   = 'qr-chevron-btn' + (isPrompt ? ' mode-prompt' : '');
+  qrDropdown.querySelectorAll('.qr-dd-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.mode === mode);
+  });
+  closeQrDropdown();
+}
+
+function openQrDropdown() {
+  qrDropdown.style.display = 'block';
+}
+
+function closeQrDropdown() {
+  qrDropdown.style.display = 'none';
+}
+
+function setQrRecState(state) {
+  qrRecState = state;
+  qrMicBtn.className = 'qr-mic-btn' + (state !== 'idle' ? ' ' + state : '');
+  if (state === 'idle') {
+    qrMicBtn.innerHTML = QR_MIC_SVG;
+    qrMicBtn.title     = 'Click to record';
+    qrStatusText.textContent = 'Click to record from popup';
+  } else if (state === 'recording') {
+    qrMicBtn.innerHTML = QR_STOP_SVG;
+    qrMicBtn.title     = 'Click to stop recording';
+    qrStatusText.textContent = 'Recording… click to stop';
+  } else if (state === 'processing') {
+    qrMicBtn.innerHTML = QR_SPIN_SVG;
+    qrMicBtn.title     = 'Processing…';
+    qrStatusText.textContent = 'Transcribing…';
+  }
+}
+
+// Sync mode pills with stored voiceMode
+chrome.storage.local.get('voiceMode', ({ voiceMode }) => {
+  setQrMode(voiceMode === 'prompt' ? 'prompt' : 'transcribe');
+});
+
+// Init mic button icon
+setQrRecState('idle');
+
+qrChevronBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  qrDropdown.style.display === 'none' ? openQrDropdown() : closeQrDropdown();
+});
+
+qrDropdown.querySelectorAll('.qr-dd-item').forEach(el => {
+  el.addEventListener('click', () => setQrMode(el.dataset.mode));
+});
+
+document.addEventListener('click', e => {
+  if (!qrChevronBtn.contains(e.target) && !qrDropdown.contains(e.target)) closeQrDropdown();
+});
+
+qrMicBtn.addEventListener('click', async () => {
+  if (qrRecState === 'idle')      await startQrRecording();
+  else if (qrRecState === 'recording') stopQrRecording();
+});
+
+async function startQrRecording() {
+  setQrRecState('recording');
+  try {
+    const resp = await chrome.runtime.sendMessage({ action: 'qr-record-start' });
+    if (resp && resp.error) throw new Error(resp.error);
+  } catch (err) {
+    const msg = /denied|permission|not allowed/i.test(err.message)
+      ? 'Microphone access denied'
+      : err.message.slice(0, 60);
+    qrStatusText.textContent = msg;
+    setTimeout(() => setQrRecState('idle'), 3000);
+  }
+}
+
+function stopQrRecording() {
+  setQrRecState('processing');
+  (async () => {
+    try {
+      const resp = await chrome.runtime.sendMessage({ action: 'qr-record-stop', voiceMode: qrMode });
+      if (resp && resp.error) throw new Error(resp.error);
+      if (!resp || !resp.transcription) throw new Error('No transcription returned.');
+      showQrResult(resp.transcription);
+      saveQrHistory(resp.transcription, { mode: qrMode, cost: resp.cost || 0, model: resp.model || 'whisper-1', inputText: resp.inputText || '' });
+    } catch (err) {
+      qrStatusText.textContent = err.message.length > 60 ? err.message.slice(0, 58) + '…' : err.message;
+      setTimeout(() => setQrRecState('idle'), 3500);
+      return;
+    }
+    setQrRecState('idle');
+  })();
+}
+
+function showQrResult(text) {
+  qrTextarea.value = text;
+  qrResult.style.display = 'flex';
+  qrCopyBtn.textContent = 'Copy to clipboard';
+  qrCopyBtn.classList.remove('copied');
+}
+
+function saveQrHistory(text, meta) {
+  chrome.storage.local.get('transcriptionHistory', ({ transcriptionHistory }) => {
+    const history = Array.isArray(transcriptionHistory) ? transcriptionHistory : [];
+    history.unshift({ text, timestamp: Date.now(), domain: 'popup', ...meta });
+    if (history.length > 100) history.length = 100;
+    chrome.storage.local.set({ transcriptionHistory: history }, () => {
+      if (viewHistory.classList.contains('active')) renderHistory(history);
+    });
+  });
+}
+
+qrCopyBtn.addEventListener('click', () => {
+  const text = qrTextarea.value;
+  if (!text) return;
+  navigator.clipboard.writeText(text).then(() => {
+    qrCopyBtn.textContent = '✓ Copied!';
+    qrCopyBtn.classList.add('copied');
+    setTimeout(() => {
+      qrCopyBtn.textContent = 'Copy to clipboard';
+      qrCopyBtn.classList.remove('copied');
+    }, 1800);
+  });
+});
+
+qrDismissBtn.addEventListener('click', () => {
+  qrResult.style.display = 'none';
+  qrTextarea.value = '';
+});

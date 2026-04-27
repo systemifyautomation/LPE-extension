@@ -526,6 +526,60 @@
     });
   }
 
+  // ---- Popup recording relay -----------------------------------------------
+
+  let popupStream    = null;
+  let popupRecorder  = null;
+  let popupChunks    = [];
+  let popupStartTime = 0;
+
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg.action === 'popup-record-start') {
+      startPopupRecording().then(sendResponse);
+      return true;
+    }
+    if (msg.action === 'popup-record-stop') {
+      stopPopupRecording().then(sendResponse);
+      return true;
+    }
+  });
+
+  async function startPopupRecording() {
+    try {
+      popupStream = await navigator.mediaDevices.getUserMedia({
+        audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+      popupChunks    = [];
+      popupStartTime = Date.now();
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
+      popupRecorder  = new MediaRecorder(popupStream, { mimeType });
+      popupRecorder.ondataavailable = e => { if (e.data.size > 0) popupChunks.push(e.data); };
+      popupRecorder.start();
+      return { success: true };
+    } catch (err) {
+      return { error: err.message };
+    }
+  }
+
+  function stopPopupRecording() {
+    return new Promise(resolve => {
+      if (!popupRecorder || popupRecorder.state === 'inactive') {
+        resolve({ error: 'No active recording' });
+        return;
+      }
+      popupRecorder.onstop = () => {
+        if (popupStream) { popupStream.getTracks().forEach(t => t.stop()); popupStream = null; }
+        const duration = (Date.now() - popupStartTime) / 1000;
+        const mimeType = popupRecorder.mimeType;
+        const blob     = new Blob(popupChunks, { type: mimeType });
+        const reader   = new FileReader();
+        reader.onload  = () => resolve({ audio: reader.result.split(',')[1], mimeType, duration });
+        reader.readAsDataURL(blob);
+      };
+      popupRecorder.stop();
+    });
+  }
+
   // ---- Toast ---------------------------------------------------------------
 
   function showToast(message, type = 'info') {

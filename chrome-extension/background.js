@@ -25,6 +25,41 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     handlePrompt(msg).then(sendResponse).catch(e => sendResponse({ error: e.message }));
     return true;
   }
+
+  // ---- Popup quick-record (relayed via active tab's content script) ---------
+  if (msg.action === 'qr-record-start') {
+    (async () => {
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab?.id) throw new Error('No active tab — open a webpage first, then use the popup mic.');
+        const resp = await chrome.tabs.sendMessage(tab.id, { action: 'popup-record-start' }, { frameId: 0 });
+        sendResponse(resp || { error: 'Content script did not respond' });
+      } catch (e) {
+        const msg2 = e.message.includes('Receiving end') || e.message.includes('Cannot access')
+          ? 'Open a regular webpage first, then click the mic.'
+          : e.message;
+        sendResponse({ error: msg2 });
+      }
+    })();
+    return true;
+  }
+  if (msg.action === 'qr-record-stop') {
+    (async () => {
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab?.id) throw new Error('No active tab');
+        const audioData = await chrome.tabs.sendMessage(tab.id, { action: 'popup-record-stop' }, { frameId: 0 });
+        if (!audioData || audioData.error) throw new Error(audioData?.error || 'Recording failed');
+        const handler = msg.voiceMode === 'prompt' ? handlePrompt : handleTranscribe;
+        const domain  = (() => { try { return new URL(tab.url).hostname; } catch (_) { return 'popup'; } })();
+        const result  = await handler({ ...audioData, domain });
+        sendResponse(result);
+      } catch (e) {
+        sendResponse({ error: e.message });
+      }
+    })();
+    return true;
+  }
 });
 
 // ---- Transcription-only mode -----------------------------------------------
@@ -147,6 +182,17 @@ async function logToSheet(row) {
 }
 
 // ---- Helpers ----------------------------------------------------------------
+
+async function ensureOffscreenDoc() {
+  const exists = await chrome.offscreen.hasDocument();
+  if (!exists) {
+    await chrome.offscreen.createDocument({
+      url: 'offscreen.html',
+      reasons: ['USER_MEDIA'],
+      justification: 'Capture microphone audio for voice-to-text from extension popup',
+    });
+  }
+}
 
 function mimeToExt(mime) {
   const map = {
